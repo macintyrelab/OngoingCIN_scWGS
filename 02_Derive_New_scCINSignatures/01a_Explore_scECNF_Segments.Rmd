@@ -1,0 +1,167 @@
+---
+title: "Copy-number feature distributions of clonal segments from TCGA & HMF"
+author: "Barbara Hernando"
+date: "25/01/2025"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+library(circlize)
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(dev=c('png'))
+options(tinytex.verbose = TRUE)
+
+## Testing
+DIR=dirname(rstudioapi::getSourceEditorContext()$path)
+ECNF.TCGA=readRDS(paste0(DIR,"/intermediate/1.1.1_TCGA_Segments_100kb_ECNF.rds"))
+```
+
+## segsize => Segment size
+
+The segment size is a measure between events and gives us a representation on how empty the genome is. If there are only a handful of events, then there should be multiple large segments aka empty chromosomes.
+
+**TCGA**
+
+```{r tcga-segment-quartiles, echo=FALSE}
+dat=as.numeric(ECNF.TCGA[["segsize"]][,2])
+q5=quantile(dat)
+qall=quantile(dat, probs=seq(0,1, by=0.05))
+q50=quantile(dat, probs=0.50)
+q90=quantile(dat, probs=0.90)
+q99=quantile(dat, probs=0.95)
+show(round(q5))
+show(round(qall))
+```
+
+The resolution used is 100kb. The segments cover multiple order of magnitudes, from 1e3 to 2e8 (hundreds of million bp). However, over 20% of the data are smaller than 1MB. Another 40% (or 60%) in total are below 10MB. Another 15% are between 10 and 35MB. The other 25% go up to 240MB. With over 249MB, it means an empty chromosome 1 and / or 2 as their lengths are 249 and 242MB respectively.
+
+
+```{r tcga-segsize-hist, echo=FALSE, fig.height=6, dpi=100}
+h <- hist(dat, breaks=100, plot=F)
+cols <- c('grey', "#8DD3C7", "#FFFFB3", "#BEBADA", "#FB8072")
+k <- cols[findInterval(h$mid, quantile(dat), rightmost.closed=T, all.inside=F) +1]
+# plot the histogram with the colours
+par(mfrow=c(2,2))
+plot(h, col=k, main="Segsize with quantile colouring")
+h$counts = log10(h$counts)
+h$counts[h$counts==-Inf]=0
+plot(h, col=k, main="Log frequency")
+h <- hist(dat[dat<1e8], breaks=100, plot=F)
+cols <- c('grey', "#8DD3C7", "#FFFFB3", "#BEBADA", "#FB8072")
+k <- cols[findInterval(h$mid, quantile(dat), rightmost.closed=T, all.inside=F) +1]
+plot(h, col=k, main="Segments < 1e8")
+h <- hist(dat[dat>1e8], breaks=100, plot=F)
+cols <- c('grey', "#8DD3C7", "#FFFFB3", "#BEBADA", "#FB8072")
+k <- cols[findInterval(h$mid, quantile(dat), rightmost.closed=T, all.inside=F) +1]
+plot(h, col=k, main="Segments > 1e8")
+```
+
+
+### Summary
+
+* definitely one component larger 60MB encoding empty chromosome armes => prior needed lesser than `r sum(dat>6e7)/length(dat)`
+* at least one component larger 100MB to represent empty chromosomes => prior needed lesser than `r sum(dat>1e8)/length(dat)`
+* potentially one component larger 200MB to represent empty chromosomes => prior needed lesser than `r sum(dat>2e8)/length(dat)`
+
+
+\newpage
+
+## changepoint => Changepoint between CNAs
+
+Basically the delta between two neighbouring CNAs. Since we are interesting in deriving signatures for single-cell data, changepoint values may be integer values.
+
+**TCGA**
+
+```{r tcga-cp-quartiles, echo=FALSE}
+dat = as.numeric(ECNF.TCGA[["changepoint"]][,2])
+dat = round(dat,1) # I allow some fluctuation for exploring distributions
+q5=quantile(dat)
+qall=quantile(dat, probs=seq(0,1, by=0.05))
+q100=quantile(dat, probs=seq(0,1, by=0.01))
+show(q5)
+show(qall)
+show(q100)
+```
+
+The majority of delta changes represent gains/losses of 1 copy. The changepoint feature has to be an integer number in the single-cell scenario, where zero values should not exist. So, we have round values before to perform the mixture modelling. 
+
+
+```{r tcga-cp-hist, echo=FALSE, fig.height=6, dpi=100}
+h <- hist(dat, plot=F)
+cols <- c('grey', "#8DD3C7", "#FFFFB3", "#BEBADA", "#FB8072")
+k <- "#FB8072"
+
+# plot the histogram with the colours
+par(mfrow=c(2,2))
+hist(dat[dat<=4], plot=T, prob=T, col=k, main="Histogram of delta copy-number lower than 4")
+lines(density(dat[dat<=4]), lwd = 2, col = "grey30")
+hist(dat[dat>4 & dat<=8], plot=T, prob=T, col=k, main="Histogram of delta copy-number from 4 to 8")
+lines(density(dat[dat>4 & dat<=8]), lwd = 2, col = "grey30")
+hist(dat[dat>8 & dat<=15], plot=T, prob=T, col=k, main="Histogram of delta copy-number from 8 to 15")
+lines(density(dat[dat>8 & dat<=15]), lwd = 2, col = "grey30")
+hist(dat[dat>15], plot=T, prob=T, col=k, main="Histogram of delta copy-number higher than 15")
+lines(density(dat[dat>15]), lwd = 2, col = "grey30")
+
+# save supplementary figure 4
+dat=as.data.frame(dat)
+dat$groups=ifelse(dat<=4,"G1",ifelse(dat>4&dat<=8,"G2",ifelse(dat>8&dat<=15,"G3","G4")))
+pdf(paste0(DIR,"/plots/1.1_SuppFig4_scCHP_feature_distribution.pdf"), width = 100/25.4, height = 100/25.4)
+p = ggplot(dat, aes(dat)) +
+    geom_histogram(aes(y = after_stat(density)), boundary = 0, fill = "#FB8072") +
+    geom_density(color = "grey30", adjust = 2) +
+    facet_wrap(~groups, scales = "free") +
+    theme(axis.text.x = element_text(hjust = 0.5, vjust = 1, size = 6),
+          axis.text.y = element_text(size = 6),
+          legend.position = "none")
+print(p)
+dev.off()
+```
+
+
+
+## Summary
+
+In the single-cell space, this feature follows a Poisson distribution and there is not components representing changes lower than 1. All components may represent integer copy number changes.
+* I definitely want to have one component for deltas from 1 to 5
+
+
+\newpage
+
+
+## bpwindow => Maximum number of breaks within a 5MB window from both the right and left hand side of the event
+
+The bpwindow is a measure for getting information about clustering/oscillating. If bpwindow is high, then events may cluster together.
+
+**TCGA**
+
+```{r tcga-bpw-quartiles, echo=FALSE}
+dat=as.numeric(ECNF.TCGA[["bpwindow"]][,2])
+q5=quantile(dat)
+qall=quantile(dat, probs=seq(0,1, by=0.05))
+q100=quantile(dat, probs=seq(0.9,1, by=0.01))
+show(q5)
+show(qall)
+show(q100)
+```
+
+Each segment should have one number. Zeros mean that there is no a surrounding CNA event in the 5MB window. Only those samples with high replication stress (short and clustered CNAs) have then a number significantly larger than zero. 5% are 0 with another 35% encoding 1's and 25% encoding 2's. 5% of segments has more than 5 breakpoints within a 5MB window, being extreme values represented in only 1%.
+
+
+```{r tcga-bpw-hist, echo=FALSE, fig.height=6, dpi=100}
+h <- hist(dat, plot=F)
+cols <- c('grey', "#8DD3C7", "#FFFFB3", "#BEBADA", "#FB8072")
+k <- "#FB8072"
+# plot the histogram with the colours
+par(mfrow=c(2,2))
+hist(dat[dat<=4], plot=T, prob=T, col=k, main="Number of surrounding breaks lower than 4")
+lines(density(dat[dat<=4]), lwd = 2, col = "grey30")
+hist(dat[dat>4 & dat<=12], plot=T, prob=T, col=k, main="Number of surrounding breaks from 5 to 12")
+lines(density(dat[dat>4 & dat<=12]), lwd = 2, col = "grey30")
+hist(dat[dat>20], plot=T, prob=T, col=k, main="Number of surrounding breaks higher than 21")
+lines(density(dat[dat>20]), lwd = 2, col = "grey30")
+```
+
+
+### Summary
+
+This distribution will probably result in 9-10 components. The first component should represent isolated events (lambda=0), while the last component should represent clustered events (lambda>10). The other components may represent the distribution of data from 1 to 10. This distribution is similar than the one seen in the TCGA.

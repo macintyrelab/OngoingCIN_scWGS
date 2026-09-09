@@ -1,0 +1,177 @@
+---
+title: "Copy-number feature distributions"
+author: "Barbara Hernando"
+date: "25/02/2023"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+library(circlize)
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(dev=c('png'))
+options(tinytex.verbose = TRUE)
+
+## Testing
+DIR=dirname(rstudioapi::getSourceEditorContext()$path)
+TCGA.ECNF=readRDS(paste0(DIR,"/intermediate/1.1_TCGA_ThreeECNF.rds"))
+```
+
+## segsize => Segment size
+
+The segment size is a measure between events and gives us a representation on how empty the genome is. If there are only a handful of events, then there should be multiple large segments aka empty chromosomes.
+
+```{r segment-quartiles, echo=FALSE}
+dat=as.numeric(TCGA.ECNF[["segsize"]][,2])
+q5=quantile(dat)
+qall=quantile(dat, probs=seq(0,1, by=0.05))
+q50=quantile(dat, probs=0.50)
+q90=quantile(dat, probs=0.90)
+q99=quantile(dat, probs=0.95)
+show(round(q5))
+show(round(qall))
+```
+
+The segments cover multiple order of magnitudes, from 6 to 2e8 (hundreds of million bp). However, over 20% of the data are smaller than 1MB. Another 35% (or 65%) in total are below 10MB. Another 20% are between 10 and 35MB. The other 25% go up to 240MB. With over 242MB, it means an empty chromosome 1 and / or 2 as their lengths are 249 and 242MB respectively.
+
+With 15% of the elements being larger than 60MB, I should have a look that a mixture model has at least one component in there to capture extreme events. Still, the majority of components shall be situated below 10MB.
+
+
+```{r segsize-hist, echo=FALSE, fig.height=6, dpi=100}
+h <- hist(dat, breaks=100, plot=F)
+cols <- c('grey', "#8DD3C7", "#FFFFB3", "#BEBADA", "#FB8072")
+k <- cols[findInterval(h$mid, quantile(dat), rightmost.closed=T, all.inside=F) +1]
+# plot the histogram with the colours
+par(mfrow=c(2,2))
+plot(h, col=k, main="Segsize with quantile colouring")
+h$counts = log10(h$counts)
+plot(h, col=k, main="Log frequency")
+h <- hist(dat[dat<1e6], breaks=100, plot=F)
+cols <- c('grey', "#8DD3C7", "#FFFFB3", "#BEBADA", "#FB8072")
+k <- cols[findInterval(h$mid, quantile(dat), rightmost.closed=T, all.inside=F) +1]
+plot(h, col=k, main="Segments < 1e6")
+h <- hist(dat[dat>1e8], breaks=100, plot=F)
+cols <- c('grey', "#8DD3C7", "#FFFFB3", "#BEBADA", "#FB8072")
+k <- cols[findInterval(h$mid, quantile(dat), rightmost.closed=T, all.inside=F) +1]
+plot(h, col=k, main="Segments > 1e8")
+```
+
+Interestingly, whole empty chromosomes start to pop up. Hence, the spiky bars in subfigure d are decreasing as it is less likely that larger chromosomes are free of CNAs than smaller chromosomes. One observation which cannot be explained by whole chromosome size are the two spikes at 1.5e+08. The one just next to 1.4e+08 could be chromosome 8 (146MB) but the next one is chromosome 7 with 158MB, hence the two peaks between at around 150MB are as of now unexplained. My guess would be empty arms of chromosome 1 or 2. But I couldn't find reliable length information for the arms. In any case, another component over 1e8 (or 100MB) might be useful for encoding empty chromosomes.
+
+
+```{r segment-cdf, echo=FALSE, fig.height=6, dpi=100}
+par(mfrow=c(2,1))
+plot(ecdf(dat), main="CDF for feature segsize")
+plot(ecdf(dat[dat<q50]), main=paste( "CDF for feature segsize with segments <", q50,"(50% quartile)" ) )
+```
+
+There are no clear jumps recognizable with a clear and long-stretched descent, which might lead to the mixture model being very similar to a spline model due to probably evenly spaced mixture components.
+
+### Summary
+
+* definitely one component larger 60MB encoding empty chromosome armes => prior needed lesser than `r sum(dat>6e7)/length(dat)`
+* at least one component larger 100MB to represent empty chromosomes => prior needed lesser than `r sum(dat>1e8)/length(dat)`
+* potentially one component larger 200MB to represent empty chromosomes => prior needed lesser than `r sum(dat>2e8)/length(dat)`
+
+\newpage
+
+## changepoint => Changepoint between CNAs
+
+Basically the delta between two neighbouring CNAs.
+
+```{r cp-quartiles, echo=FALSE}
+dat=as.numeric(TCGA.ECNF[["changepoint"]][,2])
+q5 = quantile(dat)
+qall = quantile(dat, probs=seq(0,1, by=0.05))
+q50 = quantile(dat, probs=0.50)
+q90 = quantile(dat, probs=0.90)
+q99 = quantile(dat, probs=0.95)
+show(q5)
+show(qall)
+```
+
+The majority happens between 0.7 and 2.1, with 3/4 of all deltas seem to represent clonal changes with jumps of 1 or 2.
+
+```{r cp-hist, echo=FALSE, fig.height=6, dpi=100}
+par(mfrow=c(2,2))
+h <- hist(dat, breaks=100, plot=F)
+cols <- c('grey', "#8DD3C7", "#FFFFB3", "#BEBADA", "#FB8072")
+k <- cols[findInterval(h$mid, quantile(dat), rightmost.closed=T, all.inside=F) +1]
+plot(h, col=k, main="Histogram of delta copy-number")
+h <- hist(dat[dat>1 & dat<4.2], breaks=22, plot=F)
+cols <- c('grey', "#8DD3C7", "#FFFFB3", "#BEBADA", "#FB8072")
+k <- cols[findInterval(h$mid, quantile(dat), rightmost.closed=T, all.inside=F) +1]
+plot(h, col=k, main="Events with a delta between 1 and 4.2  per arm (60 to 95%)")
+h <- hist(dat[dat>4], breaks=50, plot=F)
+cols <- c('grey', "#8DD3C7", "#FFFFB3", "#BEBADA", "#FB8072")
+k <- cols[findInterval(h$mid, quantile(dat), rightmost.closed=T, all.inside=F) +1]
+plot(h, col=k, main="Events with a delta > 4 (upper 10%)")
+h <- hist(dat[dat>100], breaks=50, plot=F)
+cols <- c('grey', "#8DD3C7", "#FFFFB3", "#BEBADA", "#FB8072")
+k <- cols[findInterval(h$mid, quantile(dat), rightmost.closed=T, all.inside=F) +1]
+plot(h, col=k,  main="Events with delta > 100 (upper 1%)")
+```
+
+## Summary
+
+* due to subclonal varieties of clonal jumps (e.g. jumps like 1.3 or 2.1) I guess the mixture model will fit at least two components per integer number. Probably more than 10 components due to the amount of samples.
+* I definitely want to have one component for deltas larger than 2 => prior < `r sum(dat>2)/length(dat)`
+* and larger 4 => prior < `r sum(dat>4)/length(dat)`
+* with a prior of 0.01% I might differentiate larger deltas than `r quantile(dat, probs=0.9999)`
+
+
+\newpage
+
+
+## bpwindow => Maximum number of breaks within a 5MB window from both the right and left hand side of the event
+
+The bpwindow is a measure for getting information about clustering/oscillating. If bpwindow is high, then events may cluster together.
+
+
+```{r segment-quartiles, echo=FALSE}
+dat=as.numeric(TCGA.ECNF[["bpwindow"]][,2])
+q5=quantile(dat)
+qall=quantile(dat, probs=seq(0,1, by=0.05))
+q100=quantile(dat, probs=seq(0,1, by=0.01))
+show(q5)
+show(qall)
+show(q100)
+```
+
+Each segment should have one number. Zeros mean that there is no a surrounding CNA event in the 5MB window. 
+Only those samples with high replication stress (short and clustered CNAs) has then a number significantly larger than zero. 10% are 0 with another 30% encoding 1's and 25% encoding 2's. Only 10% of segments has more than 5 breakpoints within a 5MB window, being extreme values represented only in 1%.
+
+
+```{r nsegments-hist, echo=FALSE, fig.height=6, dpi=100}
+h <- hist(dat, plot=F)
+cols <- c('grey', "#8DD3C7", "#FFFFB3", "#BEBADA", "#FB8072")
+k <- "#FB8072"
+# plot the histogram with the colours
+par(mfrow=c(2,2))
+hist(dat[dat<=3], plot=T, prob=T, col=k, main="Number of surrounding breaks lower than 3")
+lines(density(dat), lwd = 2, col = "grey30")
+hist(dat[dat>3 & dat<=8], plot=T, prob=T, col=k, main="Number of surrounding breaks from 4 to 8")
+lines(density(dat[dat>3 & dat<=8]), lwd = 2, col = "grey30")
+hist(dat[dat>8&dat<=20], plot=T, prob=T, col=k, main="Number of surrounding breaks from 9 to 20")
+lines(density(dat[dat>8&dat<=20]), lwd = 2, col = "grey30")
+hist(dat[dat>20], plot=T, prob=T, col=k, main="Number of surrounding breaks higher than 21")
+lines(density(dat[dat>20]), lwd = 2, col = "grey30")
+
+# save supplementary figure 2
+dat=as.data.frame(dat)
+dat$groups=ifelse(dat<=3,"G1",ifelse(dat>3&dat<=8,"G2",ifelse(dat>8&dat<=20,"G3","G4")))
+pdf(paste0(DIR,"/plots/1.1_SuppFig2_BPW_feature_distribution.pdf"), width = 100/25.4, height = 100/25.4)
+p = ggplot(dat, aes(dat)) +
+    geom_histogram(aes(y = after_stat(density)), boundary = 0, fill = "#FB8072") +
+    geom_density(color = "grey30", adjust = 2) +
+    facet_wrap(~groups, scales = "free") +
+    theme(axis.text.x = element_text(hjust = 0.5, vjust = 1, size = 6),
+          axis.text.y = element_text(size = 6),
+          legend.position = "none")
+print(p)
+dev.off()
+```
+
+
+### Summary
+
+This distribution will probably result in 4 components. The first component should represent isolated events (lambda=0), while the last component should represent clustered events (lambda>10)
